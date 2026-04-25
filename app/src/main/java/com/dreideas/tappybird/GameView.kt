@@ -12,6 +12,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.dreideas.tappybird.audio.SoundManager
 import com.dreideas.tappybird.entities.Bird
 import com.dreideas.tappybird.entities.PipePair
 import kotlin.math.cos
@@ -59,11 +60,23 @@ class GameView @JvmOverloads constructor(
     // ---------------------------------------------------------------------
 
     private val highScoreRepo = HighScoreRepository(context)
+    private val sound = SoundManager(context)
 
     private var state: GameState = GameState.Ready
     private var score: Int = 0
     private var highScore: Int = highScoreRepo.getHighScore()
     private var isNewHighScore: Boolean = false
+
+    /**
+     * If true, the bird died from a pipe hit and is currently free-falling.
+     * When it touches the ground in [updateGameOver] we play the soft thud
+     * to bookend the hit cue. False if the bird hit the ground directly
+     * (no follow-up thud — the fall sound was already played at GameOver entry).
+     */
+    private var deathThudPending: Boolean = false
+
+    /** What killed the bird this frame. Drives which audio cue plays. */
+    private enum class HitKind { NONE, GROUND, PIPE }
 
     // ---------------------------------------------------------------------
     //  Device surface (in physical pixels)
@@ -319,10 +332,22 @@ class GameView @JvmOverloads constructor(
     //  Public lifecycle (called by host Activity)
     // =====================================================================
 
-    fun pause() { stopGameThread() }
+    fun pause() {
+        stopGameThread()
+        sound.pauseMusic()
+    }
 
     fun resume() {
         if (holder.surface?.isValid == true) startGameThread()
+        sound.resumeMusic()
+    }
+
+    /**
+     * Terminal teardown — call from `Activity.onDestroy`. After this the
+     * audio resources are gone and the view should not be reused.
+     */
+    fun releaseResources() {
+        sound.release()
     }
 
     // =====================================================================
@@ -355,7 +380,12 @@ class GameView @JvmOverloads constructor(
         groundOffset = 0f
         score = 0
         isNewHighScore = false
+        deathThudPending = false
         state = GameState.Ready
+        // Spec: music plays through Ready and Playing. startMusic is idempotent
+        // and resets ducked volume back to MUSIC_VOLUME, so this covers both
+        // first launch and post-GameOver restart.
+        sound.startMusic()
     }
 
     /**
@@ -417,6 +447,7 @@ class GameView @JvmOverloads constructor(
             if (!pair.scored && bird.x > pair.x + pair.width) {
                 pair.scored = true
                 score++
+                sound.playScore()
             }
             if (pair.isOffScreenLeft()) {
                 val rightmost = pipePairs.maxByOrNull { it.x }!!
@@ -427,7 +458,8 @@ class GameView @JvmOverloads constructor(
             }
         }
 
-        if (checkCollision()) enterGameOver()
+        val hit = checkCollision()
+        if (hit != HitKind.NONE) enterGameOver(hit)
     }
 
     private fun updateGameOver(dt: Float) {
@@ -439,6 +471,10 @@ class GameView @JvmOverloads constructor(
             if (bird.y >= restingY) {
                 bird.y = restingY
                 bird.velocityY = 0f
+                if (deathThudPending) {
+                    sound.playFall()
+                    deathThudPending = false
+                }
             }
         } else {
             bird.y = restingY
@@ -456,8 +492,8 @@ class GameView @JvmOverloads constructor(
     //  Collisions (world units)
     // ---------------------------------------------------------------------
 
-    private fun checkCollision(): Boolean {
-        if (bird.y + bird.radius >= groundTopY) return true
+    private fun checkCollision(): HitKind {
+        if (bird.y + bird.radius >= groundTopY) return HitKind.GROUND
 
         for (pair in pipePairs) {
             if (pair.x + pair.width < bird.x - bird.radius) continue
@@ -467,15 +503,15 @@ class GameView @JvmOverloads constructor(
                     pair.topPipeLeft(), pair.topPipeTop(),
                     pair.topPipeRight(), pair.topPipeBottom()
                 )
-            ) return true
+            ) return HitKind.PIPE
             if (circleIntersectsRect(
                     bird.x, bird.y, bird.radius,
                     pair.bottomPipeLeft(), pair.bottomPipeTop(),
                     pair.bottomPipeRight(), pair.bottomPipeBottom(groundTopY)
                 )
-            ) return true
+            ) return HitKind.PIPE
         }
-        return false
+        return HitKind.NONE
     }
 
     private fun circleIntersectsRect(
@@ -489,9 +525,21 @@ class GameView @JvmOverloads constructor(
         return (dx * dx + dy * dy) <= (r * r)
     }
 
-    private fun enterGameOver() {
+    private fun enterGameOver(hit: HitKind) {
         state = GameState.GameOver
         gameOverElapsed = 0f
+        when (hit) {
+            HitKind.PIPE -> {
+                sound.playHit()
+                deathThudPending = true   // ground impact will play the follow-up thud
+            }
+            HitKind.GROUND -> {
+                sound.playFall()
+                deathThudPending = false  // already on the ground; no follow-up
+            }
+            HitKind.NONE -> Unit          // unreachable, defensive
+        }
+        sound.duckMusic()
         if (highScoreRepo.trySetHighScore(score)) {
             highScore = score
             isNewHighScore = true
@@ -710,11 +758,16 @@ class GameView @JvmOverloads constructor(
             GameState.Ready -> {
                 state = GameState.Playing
                 bird.flap()
+                sound.playFlap()
+                sound.startMusic()
             }
-            GameState.Playing -> bird.flap()
+            GameState.Playing -> {
+                bird.flap()
+                sound.playFlap()
+            }
             GameState.GameOver -> {
                 if (gameOverElapsed >= GameConfig.RESTART_DELAY) {
-                    initWorld()
+                    initWorld()  // initWorld() also un-ducks music back to MUSIC_VOLUME
                 }
             }
         }

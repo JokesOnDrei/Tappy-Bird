@@ -104,4 +104,57 @@ object GameConfig {
     // -------- Persistence --------
     const val PREFS_FILE: String = "game_prefs"
     const val KEY_HIGH_SCORE: String = "flappy_high_score"
+
+    // -------- Audio --------
+    /**
+     * Master mute. Dev convenience only — no UI per CLAUDE.md §8.
+     * Flip to `true` while iterating gameplay if the SFX gets old.
+     */
+    const val AUDIO_MUTED: Boolean = false
+
+    /**
+     * SoundPool concurrent stream cap. 4 covers the worst overlap:
+     * background music + flap + score + hit firing in the same frame.
+     * Higher values waste audio buffers; lower may clip the score "ding"
+     * if it lands on the same frame as a flap and a hit.
+     */
+    const val SOUND_POOL_MAX_STREAMS: Int = 4
+
+    /** Flap SFX gain (0..1). Mid-loud — taps are core feedback. */
+    const val SFX_FLAP_VOLUME: Float = 0.15f
+
+    /** Score "ding" gain (0..1). Bright but not dominant. */
+    const val SFX_SCORE_VOLUME: Float = 0.05f
+
+    /** Pipe-collision hit gain (0..1). Punchy — sells the failure. */
+    const val SFX_HIT_VOLUME: Float = 0.9f
+
+    /** Ground-impact thud gain (0..1). Softer than the hit; it's the outro. */
+    const val SFX_FALL_VOLUME: Float = 0.6f
+
+    /**
+     * Background music base volume (0..1). Quiet enough to not fight the
+     * SFX bed; the brief calls for "ambient, not tense."
+     */
+    const val MUSIC_VOLUME: Float = 0.35f
+
+    /**
+     * Ducked music volume during GameOver. ~⅓ of base — audible but recedes
+     * so the score panel reads as a calm pause rather than a continuation.
+     */
+    const val MUSIC_DUCK_VOLUME: Float = 0.12f
+
+    /**
+     * Audio filename stems in `res/raw/`. SoundManager resolves these via
+     * `Resources.getIdentifier` so missing files degrade gracefully — the
+     * game still runs (silent) even if assets haven't been added yet.
+     *
+     * Drop files into `app/src/main/res/raw/` matching these names; OGG
+     * preferred (smaller), WAV acceptable. See README "Audio assets".
+     */
+    const val SFX_FLAP_RES: String = "sfx_flap"
+    const val SFX_SCORE_RES: String = "sfx_score"
+    const val SFX_HIT_RES: String = "sfx_hit"
+    const val SFX_FALL_RES: String = "sfx_fall"
+    const val MUSIC_RES: String = "music_loop"
 }
