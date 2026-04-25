@@ -5,6 +5,10 @@ import com.dreideas.tappybird.GameConfig
 /**
  * The player-controlled bird.
  *
+ * All position, velocity, and size fields are in **world units** (see
+ * GameConfig). GameView applies the world → screen transform at render
+ * time, so this class is resolution- and DPI-independent.
+ *
  * X is fixed (the world scrolls past), Y is integrated from velocity.
  * Rotation is derived from velocity for game-feel: nose-up while rising,
  * nose-down while falling fast.

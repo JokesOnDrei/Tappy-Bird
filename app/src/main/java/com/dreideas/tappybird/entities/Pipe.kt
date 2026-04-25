@@ -6,8 +6,10 @@ import com.dreideas.tappybird.GameConfig
 /**
  * A single rectangular pipe (either the upper half or the lower half of a pair).
  *
- * Intentionally a plain data holder with no update logic of its own —
- * [PipePair] owns the scrolling X coordinate; Pipe just exposes its bounds.
+ * Bounds are in **world units**; GameView applies the world → screen
+ * transform at render time. Intentionally a plain data holder with no
+ * update logic of its own — [PipePair] owns the scrolling X coordinate,
+ * Pipe just exposes bounds.
  */
 class Pipe(
     var left: Float,

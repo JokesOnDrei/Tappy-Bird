@@ -17,6 +17,7 @@
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
             android:exported="true"
             android:screenOrientation="portrait"
+            android:windowLayoutInDisplayCutoutMode="shortEdges"
             tools:ignore="LockedOrientationActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

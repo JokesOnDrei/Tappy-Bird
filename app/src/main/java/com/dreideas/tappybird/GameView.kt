@@ -10,6 +10,8 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.dreideas.tappybird.entities.Bird
 import com.dreideas.tappybird.entities.PipePair
 import kotlin.math.cos
@@ -19,13 +21,27 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * The game's SurfaceView. Owns:
- *   - the world state (bird, pipe pool, score, game state)
- *   - the render thread (fixed-timestep update + decoupled render)
- *   - touch input handling
+ * The game's SurfaceView. Responsibilities:
+ *   - world state (bird, pipe pool, score, game state) in **world units**
+ *   - render thread (fixed-timestep update + decoupled render)
+ *   - world → screen transform (scale + offset) recomputed per surface size
+ *   - safe-area inset tracking for notches / gesture bars
+ *   - touch input
+ *
+ * Coordinate-system summary
+ * -------------------------
+ *   - Gameplay runs in **world units** on a virtual canvas of
+ *     [effectiveWorldWidth] × [effectiveWorldHeight] — ≥ the reference
+ *     1080 × 1920, extended (not letterboxed) on taller/wider devices.
+ *   - [render] pushes a single `canvas.translate(offset) + canvas.scale(scale)`
+ *     transform so sub-drawing code writes in world units naturally.
+ *   - **UI text** (score, banners) is drawn AFTER popping that transform,
+ *     using dp-based text sizes so it keeps a consistent physical size.
  *
  * Rendering is done with primitive Canvas shapes (no external assets).
- * Sprites can be swapped in later by replacing the draw* methods.
+ * Swapping sprites in later: draw bitmaps at their world-unit size inside
+ * the transformed section (the scale matrix handles DPI for free), and set
+ * `paint.isFilterBitmap = true` for bilinear filtering.
  */
 class GameView @JvmOverloads constructor(
     context: Context,
@@ -49,28 +65,74 @@ class GameView @JvmOverloads constructor(
     private var highScore: Int = highScoreRepo.getHighScore()
     private var isNewHighScore: Boolean = false
 
+    // ---------------------------------------------------------------------
+    //  Device surface (in physical pixels)
+    // ---------------------------------------------------------------------
+
     private var screenW: Float = 0f
     private var screenH: Float = 0f
-    private var groundTopY: Float = 0f
+
+    // ---------------------------------------------------------------------
+    //  World & transform (world units + pixel offsets)
+    // ---------------------------------------------------------------------
+
+    /** Effective playable world width (wu). ≥ WORLD_WIDTH; grows on wide screens. */
+    private var worldW: Float = GameConfig.WORLD_WIDTH
+
+    /** Effective playable world height (wu). ≥ WORLD_HEIGHT; grows on tall screens. */
+    private var worldH: Float = GameConfig.WORLD_HEIGHT
+
+    /** Uniform world → screen scale factor (px per world unit). */
+    private var scale: Float = 1f
+
+    /** Pixel offset of world origin (0,0) on screen. Non-zero only on ultra-short screens. */
+    private var offsetX: Float = 0f
+    private var offsetY: Float = 0f
+
+    /** World-unit Y of the top edge of the ground strip. */
+    private var groundTopY: Float = GameConfig.WORLD_HEIGHT - GameConfig.GROUND_HEIGHT
+
+    // ---------------------------------------------------------------------
+    //  Safe-area insets (in physical pixels) — set via WindowInsets callback
+    // ---------------------------------------------------------------------
+
+    private var safeAreaTop: Float = 0f
+    private var safeAreaBottom: Float = 0f
+    private var safeAreaLeft: Float = 0f
+    private var safeAreaRight: Float = 0f
+
+    // ---------------------------------------------------------------------
+    //  Entities
+    // ---------------------------------------------------------------------
 
     private lateinit var bird: Bird
     private val pipePairs: MutableList<PipePair> = ArrayList(GameConfig.PIPE_POOL_SIZE)
 
-    /** Accumulated seconds in READY state — drives the bobbing animation. */
+    // ---------------------------------------------------------------------
+    //  Timing
+    // ---------------------------------------------------------------------
+
     private var readyElapsed: Float = 0f
-    /** Seconds since game-over — gates the restart tap. */
     private var gameOverElapsed: Float = 0f
-    /** Monotonic seconds since world init — drives cosmetic animations (wing flap). */
     private var totalElapsed: Float = 0f
-    /** Running offset (0..stripeWidth) for the scrolling ground. */
     private var groundOffset: Float = 0f
 
     private val rng = Random(System.nanoTime())
 
     // ---------------------------------------------------------------------
-    //  Paints (allocated once, reused across frames — no per-frame GC)
+    //  Density & paints
+    //
+    //  WORLD paints: strokeWidth / textSize in WORLD UNITS; used inside the
+    //  scaled canvas block, so values scale with the device automatically.
+    //
+    //  UI paints: strokeWidth / textSize in PIXELS (dp→px at init); used
+    //  outside the scaled block so physical size is DPI-consistent.
     // ---------------------------------------------------------------------
 
+    private val density: Float = context.resources.displayMetrics.density
+    private fun dp(v: Float): Float = v * density
+
+    // World paints
     private val skyPaint = Paint().apply { color = Color.rgb(112, 197, 206) }
     private val pipePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(90, 175, 73) }
     private val pipeShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(60, 140, 50) }
@@ -87,63 +149,78 @@ class GameView @JvmOverloads constructor(
     private val birdEyePupilPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val birdWingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(225, 185, 50) }
 
+    // UI paints (dp-scaled at construction time)
     private val scorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
-        textSize = 140f
+        textSize = dp(72f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
     private val scoreStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.BLACK
         textAlign = Paint.Align.CENTER
-        textSize = 140f
+        textSize = dp(72f)
         style = Paint.Style.STROKE
-        strokeWidth = 8f
+        strokeWidth = dp(4f)
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+    private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.CENTER
+        textSize = dp(56f)
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+    private val titleStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        textAlign = Paint.Align.CENTER
+        textSize = dp(56f)
+        style = Paint.Style.STROKE
+        strokeWidth = dp(4f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
-        textSize = 60f
+        textSize = dp(36f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
     private val labelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.BLACK
         textAlign = Paint.Align.CENTER
-        textSize = 60f
+        textSize = dp(36f)
         style = Paint.Style.STROKE
-        strokeWidth = 6f
+        strokeWidth = dp(3f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
     private val smallLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
-        textSize = 42f
+        textSize = dp(22f)
         typeface = Typeface.DEFAULT_BOLD
     }
     private val smallLabelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.BLACK
         textAlign = Paint.Align.CENTER
-        textSize = 42f
+        textSize = dp(22f)
         style = Paint.Style.STROKE
-        strokeWidth = 5f
+        strokeWidth = dp(2.5f)
         typeface = Typeface.DEFAULT_BOLD
     }
     private val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(200, 255, 255, 255) }
     private val panelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(60, 45, 25); style = Paint.Style.STROKE; strokeWidth = 6f
+        color = Color.rgb(60, 45, 25); style = Paint.Style.STROKE; strokeWidth = dp(3f)
     }
     private val panelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(60, 45, 25); textAlign = Paint.Align.CENTER
-        textSize = 50f; typeface = Typeface.DEFAULT_BOLD
+        textSize = dp(28f); typeface = Typeface.DEFAULT_BOLD
     }
     private val newHighScorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(250, 205, 40); textAlign = Paint.Align.CENTER
-        textSize = 56f; typeface = Typeface.DEFAULT_BOLD
+        textSize = dp(32f); typeface = Typeface.DEFAULT_BOLD
     }
     private val newHighScoreStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(60, 45, 25); textAlign = Paint.Align.CENTER
-        textSize = 56f; style = Paint.Style.STROKE; strokeWidth = 6f
+        textSize = dp(32f); style = Paint.Style.STROKE; strokeWidth = dp(3f)
         typeface = Typeface.DEFAULT_BOLD
     }
 
@@ -152,6 +229,29 @@ class GameView @JvmOverloads constructor(
     init {
         holder.addCallback(this)
         isFocusable = true
+        setupInsets()
+    }
+
+    // =====================================================================
+    //  Safe-area insets
+    // =====================================================================
+
+    private fun setupInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            safeAreaTop = max(bars.top, cutout.top).toFloat()
+            safeAreaBottom = max(bars.bottom, cutout.bottom).toFloat()
+            safeAreaLeft = max(bars.left, cutout.left).toFloat()
+            safeAreaRight = max(bars.right, cutout.right).toFloat()
+            insets
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // Force an inset pass now that we're in the hierarchy.
+        ViewCompat.requestApplyInsets(this)
     }
 
     // =====================================================================
@@ -166,20 +266,53 @@ class GameView @JvmOverloads constructor(
         synchronized(this) {
             screenW = w.toFloat()
             screenH = h.toFloat()
-            groundTopY = screenH - GameConfig.GROUND_HEIGHT
-            // Initialize the world on first sizing; preserve state on later
-            // size callbacks (e.g. foreground/background) if we can.
+            recomputeScaling()
             if (!::bird.isInitialized) {
                 initWorld()
             } else {
-                // Screen size changed — re-position entities proportionally.
-                bird.x = screenW * GameConfig.BIRD_X_FRACTION
+                // Reposition bird horizontally relative to the new effective world.
+                bird.x = worldW * GameConfig.BIRD_X_FRACTION
             }
         }
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         stopGameThread()
+    }
+
+    /**
+     * Compute the world → screen transform for the current surface size.
+     *
+     * Strategy: uniform scale (never stretches the bird); extend the world
+     * dimension that would otherwise be letterboxed, so there are no black
+     * bars on tall or wide devices.
+     */
+    fun recomputeScaling() {
+        if (screenW <= 0f || screenH <= 0f) return
+
+        val scaleX = screenW / GameConfig.WORLD_WIDTH
+        val scaleY = screenH / GameConfig.WORLD_HEIGHT
+
+        if (scaleX < scaleY) {
+            // Screen is TALLER than 9:16 (modern phones, 19.5:9 / 20:9 / 21:9).
+            // Width-limited scale → extend world vertically to fill the extra
+            // vertical space instead of letterboxing with top/bottom bars.
+            scale = scaleX
+            worldW = GameConfig.WORLD_WIDTH
+            worldH = screenH / scale
+            offsetX = 0f
+            offsetY = 0f
+        } else {
+            // Screen is WIDER than 9:16 (tablets in portrait, foldables).
+            // Height-limited scale → extend world horizontally.
+            scale = scaleY
+            worldH = GameConfig.WORLD_HEIGHT
+            worldW = screenW / scale
+            offsetX = 0f
+            offsetY = 0f
+        }
+
+        groundTopY = worldH - GameConfig.GROUND_HEIGHT
     }
 
     // =====================================================================
@@ -193,20 +326,18 @@ class GameView @JvmOverloads constructor(
     }
 
     // =====================================================================
-    //  World (re)initialization
+    //  World (re)initialization — all coordinates in world units
     // =====================================================================
 
     private fun initWorld() {
         bird = Bird(
-            x = screenW * GameConfig.BIRD_X_FRACTION,
-            y = screenH * 0.5f
+            x = worldW * GameConfig.BIRD_X_FRACTION,
+            y = worldH * 0.5f
         )
         pipePairs.clear()
-        // First pair starts one screen-width past the right edge, subsequent
-        // pairs are spaced at PIPE_SPACING — the pool fills naturally as
-        // the world scrolls. Consecutive gap Ys are clamped so the vertical
-        // traversal between pipes never exceeds MAX_GAP_DELTA.
-        val firstX = screenW + GameConfig.PIPE_SPACING
+        // Consecutive gap Ys are clamped so the vertical traversal between
+        // pipes never exceeds MAX_GAP_DELTA (see randomGapY).
+        val firstX = worldW + GameConfig.PIPE_SPACING
         var prevGapY: Float? = null
         repeat(GameConfig.PIPE_POOL_SIZE) { i ->
             val gapY = randomGapY(prevGapY)
@@ -228,10 +359,9 @@ class GameView @JvmOverloads constructor(
     }
 
     /**
-     * @param prevGapY The previous pipe pair's gap center, or null for the
-     *   very first pipe (no clamp applies). When supplied, the new gap is
-     *   constrained to prevGapY ± MAX_GAP_DELTA so the bird can always
-     *   physically traverse the vertical distance between consecutive pipes.
+     * @param prevGapY Previous pipe pair's gap center (world units), or
+     *   null for the first pipe. When supplied, result is clamped to
+     *   prevGapY ± MAX_GAP_DELTA so every transition is physically reachable.
      */
     private fun randomGapY(prevGapY: Float? = null): Float {
         val halfGap = GameConfig.GAP_HEIGHT / 2f
@@ -241,13 +371,12 @@ class GameView @JvmOverloads constructor(
             minY = max(minY, prevGapY - GameConfig.MAX_GAP_DELTA)
             maxY = min(maxY, prevGapY + GameConfig.MAX_GAP_DELTA)
         }
-        // Safety: if the screen is tiny, collapse to center rather than NaN.
         if (maxY <= minY) return groundTopY * 0.5f
         return minY + rng.nextFloat() * (maxY - minY)
     }
 
     // =====================================================================
-    //  Update step — called at fixed dt by GameThread
+    //  Update — called at fixed dt by GameThread (all in world units)
     // =====================================================================
 
     @Synchronized
@@ -264,8 +393,7 @@ class GameView @JvmOverloads constructor(
 
     private fun updateReady(dt: Float) {
         readyElapsed += dt
-        // Bird bobs gently around screen center — no gravity applies yet.
-        bird.y = screenH * 0.5f +
+        bird.y = worldH * 0.5f +
             sin(readyElapsed * GameConfig.BIRD_BOB_FREQUENCY) *
             GameConfig.BIRD_BOB_AMPLITUDE
         bird.velocityY = 0f
@@ -276,8 +404,7 @@ class GameView @JvmOverloads constructor(
     private fun updatePlaying(dt: Float) {
         bird.update(dt)
 
-        // Ceiling clamp: spec allows either death or a soft clamp; we clamp
-        // so the player isn't punished for overshooting on a panicky tap.
+        // Ceiling clamp: allow soft overshoot rather than instant death.
         if (bird.y - bird.radius < 0f) {
             bird.y = bird.radius
             if (bird.velocityY < 0f) bird.velocityY = 0f
@@ -285,20 +412,13 @@ class GameView @JvmOverloads constructor(
 
         advanceGround(dt)
 
-        // Scroll, score, and recycle pipes.
         for (pair in pipePairs) {
             pair.update(dt)
-
-            // +1 the instant the bird's X passes the pair's right edge.
             if (!pair.scored && bird.x > pair.x + pair.width) {
                 pair.scored = true
                 score++
             }
-
             if (pair.isOffScreenLeft()) {
-                // The rightmost pair is guaranteed not to be `pair` itself
-                // (pair is off-screen left; POOL_SIZE ≥ 2 means at least one
-                // other pair is still to the right).
                 val rightmost = pipePairs.maxByOrNull { it.x }!!
                 pair.recycle(
                     newX = rightmost.x + GameConfig.PIPE_SPACING,
@@ -312,12 +432,9 @@ class GameView @JvmOverloads constructor(
 
     private fun updateGameOver(dt: Float) {
         gameOverElapsed += dt
-        // The bird continues to fall (gravity still applies) and spins until
-        // it hits the ground, at which point we clamp it.
         val restingY = groundTopY - bird.radius
         if (bird.y < restingY) {
             bird.update(dt)
-            // Add a spin independent of the physics-driven tilt.
             bird.rotationDegrees = min(bird.rotationDegrees + 540f * dt, 90f)
             if (bird.y >= restingY) {
                 bird.y = restingY
@@ -332,23 +449,19 @@ class GameView @JvmOverloads constructor(
     private fun advanceGround(dt: Float) {
         val stripe = GameConfig.GROUND_STRIPE_WIDTH
         groundOffset = (groundOffset - GameConfig.SCROLL_SPEED * dt) % stripe
-        if (groundOffset > 0f) groundOffset -= stripe  // keep it in [-stripe, 0]
+        if (groundOffset > 0f) groundOffset -= stripe
     }
 
     // ---------------------------------------------------------------------
-    //  Collisions
+    //  Collisions (world units)
     // ---------------------------------------------------------------------
 
-    /** @return true if the bird has died this frame. */
     private fun checkCollision(): Boolean {
-        // Ground: the whole bird-circle at/below the ground is fatal.
         if (bird.y + bird.radius >= groundTopY) return true
 
         for (pair in pipePairs) {
-            // Skip pairs that are clearly out of horizontal range of the bird.
             if (pair.x + pair.width < bird.x - bird.radius) continue
             if (pair.x > bird.x + bird.radius) continue
-
             if (circleIntersectsRect(
                     bird.x, bird.y, bird.radius,
                     pair.topPipeLeft(), pair.topPipeTop(),
@@ -365,11 +478,6 @@ class GameView @JvmOverloads constructor(
         return false
     }
 
-    /**
-     * Circle vs AABB hit-test: find the closest point on the rectangle to
-     * the circle center, then compare squared distance against r^2.
-     * (This is the standard technique — no sqrt on the hot path.)
-     */
     private fun circleIntersectsRect(
         cx: Float, cy: Float, r: Float,
         left: Float, top: Float, right: Float, bottom: Float
@@ -381,10 +489,6 @@ class GameView @JvmOverloads constructor(
         return (dx * dx + dy * dy) <= (r * r)
     }
 
-    // ---------------------------------------------------------------------
-    //  State transitions
-    // ---------------------------------------------------------------------
-
     private fun enterGameOver() {
         state = GameState.GameOver
         gameOverElapsed = 0f
@@ -395,23 +499,29 @@ class GameView @JvmOverloads constructor(
     }
 
     // =====================================================================
-    //  Render — called once per real frame by GameThread
+    //  Render
     // =====================================================================
 
     @Synchronized
     fun render(canvas: Canvas) {
-        if (!::bird.isInitialized) {
-            canvas.drawColor(Color.rgb(112, 197, 206))
-            return
-        }
-
-        // Sky
+        // Background fills the full PHYSICAL surface so the extra area on
+        // wide/tall devices gets the sky color (never a black bar).
         canvas.drawRect(0f, 0f, screenW, screenH, skyPaint)
+
+        if (!::bird.isInitialized) return
+
+        // World layer — after this transform, everything draws in world units.
+        canvas.save()
+        canvas.translate(offsetX, offsetY)
+        canvas.scale(scale, scale)
 
         drawPipes(canvas)
         drawGround(canvas)
         drawBird(canvas)
 
+        canvas.restore()
+
+        // UI layer — physical pixels, dp-sized text, offset by safe-area insets.
         when (state) {
             GameState.Ready -> drawReadyOverlay(canvas)
             GameState.Playing -> drawScoreBig(canvas)
@@ -419,16 +529,16 @@ class GameView @JvmOverloads constructor(
         }
     }
 
+    // ---- World-space drawing (called inside the scaled canvas) ----
+
     private fun drawPipes(canvas: Canvas) {
         val lipOverhang = 8f
         val lipHeight = 36f
         for (pair in pipePairs) {
-            // Upper pipe body + lip
             canvas.drawRect(
                 pair.topPipeLeft(), pair.topPipeTop(),
                 pair.topPipeRight(), pair.topPipeBottom(), pipePaint
             )
-            // thin shadow down the right edge — gives pseudo-3D depth.
             canvas.drawRect(
                 pair.topPipeRight() - 10f, pair.topPipeTop(),
                 pair.topPipeRight(), pair.topPipeBottom(), pipeShadowPaint
@@ -441,7 +551,6 @@ class GameView @JvmOverloads constructor(
                 pipeLipPaint
             )
 
-            // Lower pipe body + lip
             canvas.drawRect(
                 pair.bottomPipeLeft(), pair.bottomPipeTop(),
                 pair.bottomPipeRight(), pair.bottomPipeBottom(groundTopY), pipePaint
@@ -461,17 +570,16 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun drawGround(canvas: Canvas) {
-        // Thin dark-green strip at the very top of the ground.
-        canvas.drawRect(0f, groundTopY, screenW, groundTopY + 12f, groundTopPaint)
-        // Base sand.
-        canvas.drawRect(0f, groundTopY + 12f, screenW, screenH, groundPaint)
-        // Scrolling stripe pattern for parallax feedback.
+        // Draw across the FULL effective world width so wide screens have no
+        // exposed sky strip at the edges.
+        canvas.drawRect(0f, groundTopY, worldW, groundTopY + 12f, groundTopPaint)
+        canvas.drawRect(0f, groundTopY + 12f, worldW, worldH, groundPaint)
         val stripe = GameConfig.GROUND_STRIPE_WIDTH
         var x = groundOffset
-        while (x < screenW) {
+        while (x < worldW) {
             canvas.drawRect(
                 x, groundTopY + 12f,
-                x + stripe / 2f, screenH,
+                x + stripe / 2f, worldH,
                 groundStripeAPaint
             )
             x += stripe
@@ -483,11 +591,9 @@ class GameView @JvmOverloads constructor(
         canvas.save()
         canvas.rotate(bird.rotationDegrees, bird.x, bird.y)
 
-        // Body
         canvas.drawCircle(bird.x, bird.y, r, birdBodyPaint)
         canvas.drawCircle(bird.x, bird.y, r, birdOutlinePaint)
 
-        // Wing — a simple filled ellipse that "flaps" via a time-based scale.
         val wingPhase = sin(totalElapsed * 10f + bird.y * 0.02f)
         val wingH = r * 0.35f * (0.7f + 0.3f * wingPhase)
         tmpRect.set(
@@ -499,12 +605,10 @@ class GameView @JvmOverloads constructor(
         canvas.drawOval(tmpRect, birdWingPaint)
         canvas.drawOval(tmpRect, birdOutlinePaint)
 
-        // Eye
         canvas.drawCircle(bird.x + r * 0.35f, bird.y - r * 0.35f, r * 0.22f, birdEyeWhitePaint)
         canvas.drawCircle(bird.x + r * 0.35f, bird.y - r * 0.35f, r * 0.22f, birdOutlinePaint)
         canvas.drawCircle(bird.x + r * 0.42f, bird.y - r * 0.32f, r * 0.10f, birdEyePupilPaint)
 
-        // Beak
         tmpRect.set(
             bird.x + r * 0.55f, bird.y - r * 0.18f,
             bird.x + r + 14f, bird.y + r * 0.18f
@@ -515,71 +619,80 @@ class GameView @JvmOverloads constructor(
         canvas.restore()
     }
 
+    // ---- UI drawing (physical pixels, dp text, safe-area aware) ----
+
+    /** Safe top edge in physical pixels — below notches & status bar. */
+    private fun safeTop(): Float = safeAreaTop + dp(16f)
+
+    /** Safe bottom edge in physical pixels — above gesture bar. */
+    private fun safeBottom(): Float = screenH - safeAreaBottom - dp(16f)
+
     private fun drawScoreBig(canvas: Canvas) {
-        val y = screenH * 0.15f
+        val cx = screenW / 2f
+        val y = safeTop() + dp(72f)
         val text = score.toString()
-        canvas.drawText(text, screenW / 2f, y, scoreStrokePaint)
-        canvas.drawText(text, screenW / 2f, y, scorePaint)
+        canvas.drawText(text, cx, y, scoreStrokePaint)
+        canvas.drawText(text, cx, y, scorePaint)
     }
 
     private fun drawReadyOverlay(canvas: Canvas) {
-        // "Tappy Bird" title
-        val titleY = screenH * 0.22f
-        canvas.drawText("TAPPY BIRD", screenW / 2f, titleY, scoreStrokePaint)
-        canvas.drawText("TAPPY BIRD", screenW / 2f, titleY, scorePaint)
+        val cx = screenW / 2f
 
-        // Tap to start
-        val tapY = screenH * 0.75f
-        canvas.drawText("TAP TO START", screenW / 2f, tapY, labelStrokePaint)
-        canvas.drawText("TAP TO START", screenW / 2f, tapY, labelPaint)
+        // Title at ~22% of screen, but never above the notch.
+        val titleY = max(safeTop() + dp(72f), screenH * 0.22f)
+        canvas.drawText("TAPPY BIRD", cx, titleY, titleStrokePaint)
+        canvas.drawText("TAPPY BIRD", cx, titleY, titlePaint)
 
-        // High score (subtle)
-        val hsY = screenH * 0.82f
+        // "Tap to start" + high score near the bottom, above gesture bar.
+        val tapY = min(safeBottom() - dp(60f), screenH * 0.78f)
+        canvas.drawText("TAP TO START", cx, tapY, labelStrokePaint)
+        canvas.drawText("TAP TO START", cx, tapY, labelPaint)
+
+        val hsY = tapY + dp(40f)
         val hsText = "HIGH SCORE: $highScore"
-        canvas.drawText(hsText, screenW / 2f, hsY, smallLabelStrokePaint)
-        canvas.drawText(hsText, screenW / 2f, hsY, smallLabelPaint)
+        canvas.drawText(hsText, cx, hsY, smallLabelStrokePaint)
+        canvas.drawText(hsText, cx, hsY, smallLabelPaint)
     }
 
     private fun drawGameOverOverlay(canvas: Canvas) {
-        // Header
-        val headerY = screenH * 0.22f
-        canvas.drawText("GAME OVER", screenW / 2f, headerY, scoreStrokePaint)
-        canvas.drawText("GAME OVER", screenW / 2f, headerY, scorePaint)
-
-        // Result panel
-        val panelW = screenW * 0.7f
-        val panelH = screenH * 0.22f
-        val panelLeft = (screenW - panelW) / 2f
-        val panelTop = screenH * 0.32f
-        tmpRect.set(panelLeft, panelTop, panelLeft + panelW, panelTop + panelH)
-        canvas.drawRoundRect(tmpRect, 24f, 24f, panelPaint)
-        canvas.drawRoundRect(tmpRect, 24f, 24f, panelStrokePaint)
-
         val cx = screenW / 2f
+
+        val headerY = max(safeTop() + dp(72f), screenH * 0.22f)
+        canvas.drawText("GAME OVER", cx, headerY, titleStrokePaint)
+        canvas.drawText("GAME OVER", cx, headerY, titlePaint)
+
+        val panelW = min(dp(300f), screenW * 0.8f)
+        val panelH = dp(130f)
+        val panelLeft = cx - panelW / 2f
+        val panelTop = headerY + dp(50f)
+        tmpRect.set(panelLeft, panelTop, panelLeft + panelW, panelTop + panelH)
+        val corner = dp(12f)
+        canvas.drawRoundRect(tmpRect, corner, corner, panelPaint)
+        canvas.drawRoundRect(tmpRect, corner, corner, panelStrokePaint)
+
         canvas.drawText("SCORE: $score", cx, panelTop + panelH * 0.38f, panelTextPaint)
         canvas.drawText("BEST: $highScore", cx, panelTop + panelH * 0.78f, panelTextPaint)
 
         if (isNewHighScore) {
-            // Gentle pulse: text scales slightly with time so it draws the eye.
             val pulse = 1f + 0.08f * sin(gameOverElapsed * 6f)
+            val msgY = panelTop + panelH + dp(60f)
             canvas.save()
-            canvas.scale(pulse, pulse, cx, screenH * 0.60f)
+            canvas.scale(pulse, pulse, cx, msgY)
             val msg = "NEW HIGH SCORE!"
-            canvas.drawText(msg, cx, screenH * 0.60f, newHighScoreStrokePaint)
-            canvas.drawText(msg, cx, screenH * 0.60f, newHighScorePaint)
+            canvas.drawText(msg, cx, msgY, newHighScoreStrokePaint)
+            canvas.drawText(msg, cx, msgY, newHighScorePaint)
             canvas.restore()
         }
 
-        // Restart prompt — hidden until RESTART_DELAY elapsed.
         if (gameOverElapsed >= GameConfig.RESTART_DELAY) {
-            val restartY = screenH * 0.72f
+            val restartY = min(safeBottom() - dp(40f), screenH * 0.82f)
             canvas.drawText("TAP TO RESTART", cx, restartY, labelStrokePaint)
             canvas.drawText("TAP TO RESTART", cx, restartY, labelPaint)
         }
     }
 
     // =====================================================================
-    //  Input
+    //  Input — taps are in physical pixels; world coordinates don't matter.
     // =====================================================================
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -629,9 +742,8 @@ class GameView @JvmOverloads constructor(
                 t.join()
                 joined = true
             } catch (_: InterruptedException) {
-                // Retry the join — we need the thread fully dead before
-                // the surface can be torn down, otherwise the next lock
-                // attempt can crash.
+                // Retry the join — the thread must be fully dead before the
+                // surface is torn down, else lockCanvas may crash next time.
             }
         }
         gameThread = null
@@ -639,19 +751,7 @@ class GameView @JvmOverloads constructor(
 }
 
 /**
- * Dedicated game loop thread.
- *
- * Uses a fixed-timestep accumulator pattern so physics stays identical at
- * 30/60/120 Hz:
- *
- *   accumulator += realDt
- *   while (accumulator >= FIXED_DT):
- *       update(FIXED_DT)
- *       accumulator -= FIXED_DT
- *   render()
- *
- * Real dt is clamped to MAX_FRAME_DT so a hitch never triggers a spiral
- * of physics catch-up that locks the UI.
+ * Dedicated game loop thread (fixed-timestep accumulator pattern).
  */
 private class GameThread(
     private val surfaceHolder: SurfaceHolder,
@@ -686,26 +786,22 @@ private class GameThread(
                     }
                 }
             } catch (_: IllegalStateException) {
-                // Surface went away between isValid check and lock — ignore.
+                // Surface went away between isValid and lock — ignore.
             } finally {
                 if (canvas != null) {
                     try {
                         surfaceHolder.unlockCanvasAndPost(canvas)
                     } catch (_: IllegalStateException) {
-                        // Same as above — swallow.
                     }
                 }
             }
 
-            // Soft frame cap: if we finished well under the 60 Hz budget, yield
-            // the rest of the slice so we don't spin the CPU.
             val frameElapsedNs = System.nanoTime() - now
             val sleepNs = targetFrameNs - frameElapsedNs
             if (sleepNs > 0) {
                 try {
                     sleep(sleepNs / 1_000_000L, (sleepNs % 1_000_000L).toInt())
                 } catch (_: InterruptedException) {
-                    // Interrupt during pause — loop will re-check `running`.
                 }
             }
         }

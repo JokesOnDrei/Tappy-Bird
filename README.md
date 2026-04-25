@@ -45,11 +45,80 @@ app/src/main/java/com/dreideas/tappybird/
 ├── GameConfig.kt             ← every tunable constant lives here
 ├── GameState.kt              ← sealed class: Ready / Playing / GameOver
 ├── HighScoreRepository.kt    ← SharedPreferences wrapper
+├── ScreenUtils.kt            ← dp ⇄ px helpers
 └── entities/
     ├── Bird.kt               ← physics + rotation
     ├── Pipe.kt               ← one rectangle
     └── PipePair.kt           ← top+bottom rects, scroll, scoring flag
 ```
+
+## Responsive design
+
+The game is resolution- and aspect-ratio-independent. Three coordinate
+systems coexist — understand them before adding any visual element.
+
+| System | Used for | Conversion |
+|---|---|---|
+| **World units (wu)** | bird, pipes, ground, physics | 1 wu = 1 px on a 1080×1920 reference device; scaled per device at render time |
+| **dp** (density-independent px) | UI text (score, banners), touch targets | `dp × density` → px |
+| **px** | final draw output | — |
+
+### How the transform works
+
+`GameView.recomputeScaling()` runs on every surface-size change. It picks
+a uniform scale so the bird never stretches into an oval, and *extends*
+the world dimension that would otherwise be letterboxed:
+
+- **Taller-than-9:16 screens** (19.5:9, 20:9, 21:9) — scale limited by
+  width; `worldH` grows above the 1920-wu baseline to fill the screen.
+  The player gets a taller playfield on a 21:9 phone.
+- **Wider-than-9:16 screens** (tablets in portrait, Pixel Fold) — scale
+  limited by height; `worldW` grows above 1080 wu. The background and
+  ground fill to the edges; the bird still sits at `worldW * 0.35`.
+- **No black bars ever.** The sky is drawn across the full physical
+  surface before the world transform is applied.
+
+`render()` applies the transform once via
+`canvas.translate(offset) + canvas.scale(scale)`, then world-space draw
+calls are expressed in world units. After `canvas.restore()`, UI is
+drawn in pixel coordinates with dp-sized text.
+
+### Safe-area handling
+
+Insets from notches, status bars, and gesture bars are collected via
+`ViewCompat.setOnApplyWindowInsetsListener`. UI elements clamp their
+positions with `safeTop()` / `safeBottom()` helpers so the score never
+hides behind a hole-punch camera and "Tap to Restart" never lands on
+the gesture bar.
+
+`AndroidManifest.xml` sets
+`android:windowLayoutInDisplayCutoutMode="shortEdges"` so the app draws
+edge-to-edge behind the cutout; the inset system then offsets UI clear
+of it.
+
+### Adding new visual elements — the rules
+
+- **Gameplay objects** (obstacles, power-ups, particles): draw *inside*
+  the scaled block in `render()` using world-unit coordinates. They'll
+  scale automatically for every device.
+- **UI / HUD** (text, buttons, icons): draw *outside* the scaled block
+  using `dp()`-converted sizes, and use `safeTop()` / `safeBottom()`
+  for positioning.
+- **Physics constants** (in `GameConfig.kt`): always in world units per
+  second. Never multiply by `density` or `scale`.
+- **Bitmap sprites** (when/if you add them): store at XXXHDPI source
+  resolution, draw inside the scaled block at the sprite's *world-unit*
+  size. Set `paint.isFilterBitmap = true` for bilinear filtering when
+  the scale is not 1.0.
+
+### Configuration changes
+
+`AndroidManifest.xml` declares
+`android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"`
+so the Activity is **not** recreated on fold/unfold or display-cutout
+toggles. `MainActivity.onConfigurationChanged` forwards the event to
+`GameView.recomputeScaling()` as a safety net in case the surface-size
+callback lags behind.
 
 ## Architecture notes
 
@@ -77,7 +146,7 @@ All knobs live in `GameConfig.kt`. Common adjustments:
 
 | Want…                                | Change                                                 |
 |--------------------------------------|--------------------------------------------------------|
-| Easier — bigger gap                  | increase `GAP_HEIGHT` (current 240; don't exceed ~260) |
+| Easier — bigger gap                  | increase `GAP_HEIGHT` (current 280 wu; every +20 adds ~10% clearance) |
 | Harder — narrower gap                | decrease `GAP_HEIGHT`                                  |
 | Faster scrolling                     | increase `SCROLL_SPEED`                                |
 | Softer / floatier feel               | decrease `GRAVITY`, or make `FLAP_IMPULSE` more negative |

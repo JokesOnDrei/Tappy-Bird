@@ -6,8 +6,9 @@ import com.dreideas.tappybird.GameConfig
  * A top/bottom pipe pair sharing one X coordinate and a randomized
  * vertical gap center. The pair is the unit of scrolling and scoring.
  *
- * Ownership: [com.dreideas.tappybird.GameView] keeps a fixed-size pool of
- * these and recycles them as they leave the screen.
+ * All coordinates are in **world units**. Ownership:
+ * [com.dreideas.tappybird.GameView] keeps a fixed-size pool of these and
+ * recycles them as they leave the screen.
  */
 class PipePair(
     var x: Float,

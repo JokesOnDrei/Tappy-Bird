@@ -3,12 +3,34 @@ package com.dreideas.tappybird
 /**
  * Single source of truth for all tunable game constants.
  *
- * Units: pixels (px), seconds (s). All velocities are px/s, accelerations px/s^2.
- * Values are chosen to feel authentic on a ~1080x1920 display; because the
- * physics integrator is frame-rate independent, they will behave identically
+ * Units: **world units (wu)** and seconds. Velocities are wu/s, accelerations
+ * wu/s². A "world unit" is the abstract coordinate the game logic runs in;
+ * GameView computes a per-device scale+offset and maps world → screen pixels
+ * at render time so physics feels identical on every device.
+ *
+ * The reference world is 1080 × 1920 wu (9:16). On devices with that exact
+ * aspect, 1 wu = 1 px. On taller or wider devices the playable world is
+ * extended (not letterboxed) — see GameView.recomputeScaling().
+ *
+ * Values are tuned for engaged gameplay on the reference world; because the
+ * physics integrator is frame-rate independent they also behave identically
  * at 30 / 60 / 120 FPS.
  */
 object GameConfig {
+
+    // -------- World reference size --------
+    /**
+     * Reference world width in world units. All gameplay X values are
+     * interpreted relative to this; the actual playable width may be larger
+     * on wide devices (see GameView.worldW).
+     */
+    const val WORLD_WIDTH: Float = 1080f
+
+    /**
+     * Reference world height in world units. The actual playable height may
+     * be larger on tall devices (see GameView.worldH).
+     */
+    const val WORLD_HEIGHT: Float = 1920f
 
     // -------- Physics --------
     /** Constant downward acceleration applied every frame. */
