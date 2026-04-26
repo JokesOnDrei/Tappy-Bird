@@ -137,8 +137,11 @@ callback lags behind.
   `surfaceCreated` and joined from `surfaceDestroyed`; the host Activity
   also forwards `onPause` → `pause()` so the thread is always torn down
   cleanly before the surface goes away.
-- **Collision** — circle-vs-AABB using the "closest point on rect then
-  squared distance" trick; no `sqrt` on the hot path.
+- **Collision** — AABB-vs-AABB. Bird is a rectangle matching the sprite's
+  visible silhouette (`BIRD_COLLISION_HALF_WIDTH` × `BIRD_COLLISION_HALF_HEIGHT`,
+  slightly inset so transparent corner cells don't trigger). Previously
+  used circle-vs-AABB; switched because the bird sprite is wider than
+  tall and a bounding circle over-reached at the corners.
 
 ## Tuning guide
 

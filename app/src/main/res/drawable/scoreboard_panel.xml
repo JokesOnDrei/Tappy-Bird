@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Pixel-style scoreboard panel for the Game Over screen.
+
+    Three stacked layers form the classic Flappy Bird "chunky pill" look:
+      1. Outer dark brown border (the ink line around the whole thing)
+      2. Pale-green highlight ring (a 1-pixel-bright inset that pops the border)
+      3. Main green fill (the body that the labels and medal sit on)
+
+    Colors mirror the existing Paint values in GameView so swapping between
+    the procedural and drawable renderers is a no-op visually.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 1. Outer dark border -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#3C230F" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+
+    <!-- 2. Pale-green highlight ring (1.5dp inset all sides) -->
+    <item
+        android:left="2dp"
+        android:top="2dp"
+        android:right="2dp"
+        android:bottom="2dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#DCEBC3" />
+            <corners android:radius="5dp" />
+        </shape>
+    </item>
+
+    <!-- 3. Main green fill (4dp inset overall — leaves a 2dp dark + 2dp pale rim) -->
+    <item
+        android:left="4dp"
+        android:top="4dp"
+        android:right="4dp"
+        android:bottom="4dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#BEDCA5" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+
+</layer-list>

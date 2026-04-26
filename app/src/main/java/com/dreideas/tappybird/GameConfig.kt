@@ -58,7 +58,27 @@ object GameConfig {
     const val MAX_RISE_SPEED: Float = -660f
 
     // -------- Bird --------
-    const val BIRD_RADIUS: Float = 40f
+    /**
+     * Visual reference radius. Drives sprite scale in [GameView.drawBird]:
+     * `pixelSize = (BIRD_RADIUS * 2) / BirdSprite.widthCells`. Not used for
+     * collision — see [BIRD_COLLISION_HALF_WIDTH] / [BIRD_COLLISION_HALF_HEIGHT].
+     */
+    const val BIRD_RADIUS: Float = 60f
+
+    /**
+     * Bird collision is **AABB**, not circle. The visible bird sprite is
+     * 17×12 cells (wider than tall); a bounding circle hugely over-reaches
+     * at the transparent corners. These half-extents match the sprite's
+     * solid silhouette, slightly inset (~5%) so the empty corner cells
+     * don't trigger a hit.
+     *
+     * Result: a pipe registers a collision only when it actually overlaps
+     * a visible part of the bird, not when it merely enters the bounding
+     * circle. Beak protrusion IS included — the beak is visible.
+     */
+    const val BIRD_COLLISION_HALF_WIDTH: Float = 56f   // sprite half-width 60, inset to 56
+    const val BIRD_COLLISION_HALF_HEIGHT: Float = 40f  // sprite half-height ~42, inset to 40
+
     /** Horizontal position of the bird as a fraction of the screen width. */
     const val BIRD_X_FRACTION: Float = 0.35f
     /** Bobbing amplitude (px) while in READY state. */
@@ -88,8 +108,8 @@ object GameConfig {
     const val MAX_GAP_DELTA: Float = 800f
 
     // -------- Ground --------
-    const val GROUND_HEIGHT: Float = 160f
-    const val GROUND_STRIPE_WIDTH: Float = 40f
+    const val GROUND_HEIGHT: Float = 240f
+    const val GROUND_STRIPE_WIDTH: Float = 60f
 
     // -------- Loop --------
     /** Fixed timestep for the update loop (1/60 s). Render is decoupled. */
@@ -157,4 +177,36 @@ object GameConfig {
     const val SFX_HIT_RES: String = "sfx_hit"
     const val SFX_FALL_RES: String = "sfx_fall"
     const val MUSIC_RES: String = "music_loop"
+
+    // -------- Typography --------
+    /**
+     * UI font resources, expected at `app/src/main/res/font/`.
+     *
+     * The naming distinguishes two weight roles (title vs. body) so the
+     * font system supports two-tier hierarchy when the chosen face has
+     * multiple weights. The current font (Jersey) only has one weight,
+     * so both constants resolve to the same file — that's fine; the
+     * loader returns the same Typeface to both paints.
+     *
+     * Resolved at runtime by name via `Resources.getIdentifier` so missing
+     * files degrade gracefully — the game still runs (with a system-default
+     * fallback) even if no font has been installed.
+     *
+     * Filenames in res/font/ MUST be lowercase letters/digits/underscores
+     * only — Android's resource compiler rejects hyphens.
+     */
+    const val PIXEL_FONT_TITLE_RES: String = "jersey_regular"
+    const val PIXEL_FONT_BODY_RES: String = "jersey_regular"
+
+    // -------- Medals --------
+    /**
+     * Score thresholds for end-of-game medals shown in the Game Over panel.
+     * Tuned against the difficulty curve from the physics analysis (see
+     * README "Predicted performance"): casual players (~4 pipes median)
+     * almost never see a medal, average players (~12) earn bronze, skilled
+     * players reliably hit gold.
+     */
+    const val MEDAL_BRONZE_THRESHOLD: Int = 10
+    const val MEDAL_SILVER_THRESHOLD: Int = 20
+    const val MEDAL_GOLD_THRESHOLD: Int = 30
 }

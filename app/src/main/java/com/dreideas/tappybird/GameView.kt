@@ -10,11 +10,16 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.graphics.drawable.Drawable
+import androidx.core.content.ContextCompat
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.dreideas.tappybird.audio.SoundManager
 import com.dreideas.tappybird.entities.Bird
 import com.dreideas.tappybird.entities.PipePair
+import com.dreideas.tappybird.sprites.BirdSprite
+import com.dreideas.tappybird.sprites.PipeSprite
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -77,6 +82,16 @@ class GameView @JvmOverloads constructor(
 
     /** What killed the bird this frame. Drives which audio cue plays. */
     private enum class HitKind { NONE, GROUND, PIPE }
+
+    /** Medal earned at game-over. NONE if the score didn't clear bronze. */
+    private enum class Medal { NONE, BRONZE, SILVER, GOLD }
+
+    private fun medalForScore(s: Int): Medal = when {
+        s >= GameConfig.MEDAL_GOLD_THRESHOLD -> Medal.GOLD
+        s >= GameConfig.MEDAL_SILVER_THRESHOLD -> Medal.SILVER
+        s >= GameConfig.MEDAL_BRONZE_THRESHOLD -> Medal.BRONZE
+        else -> Medal.NONE
+    }
 
     // ---------------------------------------------------------------------
     //  Device surface (in physical pixels)
@@ -145,97 +160,127 @@ class GameView @JvmOverloads constructor(
     private val density: Float = context.resources.displayMetrics.density
     private fun dp(v: Float): Float = v * density
 
+    /**
+     * Pixel-style fonts loaded from `res/font/`. Resolved by name at
+     * runtime via `getIdentifier` so a missing file is a logged warning
+     * rather than a compile error — same graceful-degrade pattern as audio.
+     *
+     * Two weights are used to give a clean visual hierarchy:
+     *   - [pixelFontTitle] — bold, for titles + numbers
+     *   - [pixelFontBody]  — medium, for labels
+     */
+    private val pixelFontTitle: Typeface =
+        loadFontRes(GameConfig.PIXEL_FONT_TITLE_RES, Typeface.DEFAULT_BOLD)
+    private val pixelFontBody: Typeface =
+        loadFontRes(GameConfig.PIXEL_FONT_BODY_RES, Typeface.DEFAULT)
+
+    private fun loadFontRes(name: String, fallback: Typeface): Typeface {
+        @Suppress("DiscouragedApi")  // intentional: lazy resolution lets missing fonts degrade gracefully
+        val id = context.resources.getIdentifier(name, "font", context.packageName)
+        if (id == 0) {
+            android.util.Log.i(
+                "TappyBird/Font",
+                "Font '$name' not in res/font — falling back to system default."
+            )
+            return fallback
+        }
+        return try {
+            ResourcesCompat.getFont(context, id) ?: fallback
+        } catch (_: android.content.res.Resources.NotFoundException) {
+            fallback
+        }
+    }
+
     // World paints
     private val skyPaint = Paint().apply { color = Color.rgb(112, 197, 206) }
-    private val pipePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(90, 175, 73) }
-    private val pipeShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(60, 140, 50) }
-    private val pipeLipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(100, 195, 80) }
+    // Pipes are rendered via PipeSprite — no inline pipe paints needed here.
     private val groundPaint = Paint().apply { color = Color.rgb(221, 216, 148) }
     private val groundStripeAPaint = Paint().apply { color = Color.rgb(206, 199, 130) }
     private val groundTopPaint = Paint().apply { color = Color.rgb(90, 175, 73) }
-    private val birdBodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(241, 213, 76) }
-    private val birdOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(60, 45, 25); style = Paint.Style.STROKE; strokeWidth = 4f
-    }
-    private val birdBeakPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(240, 115, 40) }
-    private val birdEyeWhitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-    private val birdEyePupilPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
-    private val birdWingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(225, 185, 50) }
+    // Bird is rendered via BirdSprite — no per-feature paints needed here.
 
-    // UI paints (dp-scaled at construction time)
-    private val scorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-        textSize = dp(72f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
-    private val scoreStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
-        textAlign = Paint.Align.CENTER
-        textSize = dp(72f)
-        style = Paint.Style.STROKE
-        strokeWidth = dp(4f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
-    private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-        textSize = dp(56f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
-    private val titleStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
-        textAlign = Paint.Align.CENTER
-        textSize = dp(56f)
-        style = Paint.Style.STROKE
-        strokeWidth = dp(4f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
-    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-        textSize = dp(36f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
-    private val labelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
-        textAlign = Paint.Align.CENTER
-        textSize = dp(36f)
-        style = Paint.Style.STROKE
-        strokeWidth = dp(3f)
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
-    private val smallLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-        textSize = dp(22f)
-        typeface = Typeface.DEFAULT_BOLD
-    }
-    private val smallLabelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
-        textAlign = Paint.Align.CENTER
-        textSize = dp(22f)
-        style = Paint.Style.STROKE
-        strokeWidth = dp(2.5f)
-        typeface = Typeface.DEFAULT_BOLD
-    }
-    private val panelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(200, 255, 255, 255) }
-    private val panelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(60, 45, 25); style = Paint.Style.STROKE; strokeWidth = dp(3f)
-    }
-    private val panelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(60, 45, 25); textAlign = Paint.Align.CENTER
-        textSize = dp(28f); typeface = Typeface.DEFAULT_BOLD
-    }
-    private val newHighScorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(250, 205, 40); textAlign = Paint.Align.CENTER
-        textSize = dp(32f); typeface = Typeface.DEFAULT_BOLD
-    }
-    private val newHighScoreStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(60, 45, 25); textAlign = Paint.Align.CENTER
-        textSize = dp(32f); style = Paint.Style.STROKE; strokeWidth = dp(3f)
-        typeface = Typeface.DEFAULT_BOLD
-    }
+    // ---------- UI paints (dp-sized; pixel-font typeface throughout) ----------
+
+    // Big in-game score (white digits, dark stroke) — title/bold weight
+    private val scorePaint = pixelTextPaint(dp(72f), Color.WHITE, align = Paint.Align.CENTER)
+    private val scoreStrokePaint = pixelTextStrokePaint(dp(72f), Color.rgb(60, 35, 15), dp(6f), align = Paint.Align.CENTER)
+
+    // Title — "TAPPY BIRD" / "GAME OVER" — chunky orange with dark outline
+    private val titlePaint = pixelTextPaint(dp(56f), Color.rgb(252, 152, 30), align = Paint.Align.CENTER)
+    private val titleStrokePaint = pixelTextStrokePaint(dp(56f), Color.rgb(95, 50, 15), dp(8f), align = Paint.Align.CENTER)
+
+    // Body labels — "TAP TO START" / "TAP TO RESTART" — medium weight
+    private val labelPaint = pixelTextPaint(dp(30f), Color.WHITE, align = Paint.Align.CENTER, font = pixelFontBody)
+    private val labelStrokePaint = pixelTextStrokePaint(dp(30f), Color.rgb(60, 35, 15), dp(4f), align = Paint.Align.CENTER, font = pixelFontBody)
+
+    // Small label — "HIGH SCORE: 90" on the Ready screen — medium weight
+    private val smallLabelPaint = pixelTextPaint(dp(20f), Color.WHITE, align = Paint.Align.CENTER, font = pixelFontBody)
+    private val smallLabelStrokePaint = pixelTextStrokePaint(dp(20f), Color.rgb(60, 35, 15), dp(3f), align = Paint.Align.CENTER, font = pixelFontBody)
+
+    /**
+     * Game-over scoreboard panel as a layer-list drawable
+     * ([R.drawable.scoreboard_panel]). Loaded once; bounds are set per-frame
+     * before drawing. Falls back to procedural rectangles if (somehow) the
+     * resource doesn't load.
+     */
+    private val scoreboardDrawable: Drawable? =
+        ContextCompat.getDrawable(context, R.drawable.scoreboard_panel)
+
+    // Procedural fallback paints — used only if the drawable fails to load.
+    private val panelBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(60, 35, 15) }
+    private val panelFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(190, 220, 165) }
+    private val panelInnerHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(220, 235, 195) }
+
+    // Panel labels — "MEDAL" / "SCORE" / "HIGH SCORE" — medium weight
+    private val panelLabelCenterPaint = pixelTextPaint(dp(16f), Color.rgb(110, 145, 95), align = Paint.Align.CENTER, font = pixelFontBody)
+    private val panelLabelRightPaint = pixelTextPaint(dp(16f), Color.rgb(110, 145, 95), align = Paint.Align.RIGHT, font = pixelFontBody)
+
+    // Panel score numbers (right-aligned, white with dark stroke)
+    private val panelNumberPaint = pixelTextPaint(dp(28f), Color.WHITE, align = Paint.Align.RIGHT)
+    private val panelNumberStrokePaint = pixelTextStrokePaint(dp(28f), Color.rgb(60, 35, 15), dp(4f), align = Paint.Align.RIGHT)
+
+    // Medal palette
+    private val medalRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(150, 185, 130) }
+    private val medalEmptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(200, 225, 175) }
+    private val medalBronzePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(195, 110, 50) }
+    private val medalSilverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(195, 200, 215) }
+    private val medalGoldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(245, 200, 60) }
+    private val medalShinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(140, 255, 255, 255) }
+
+    // "NEW HIGH SCORE!" banner (gold pixel text)
+    private val newHighScorePaint = pixelTextPaint(dp(24f), Color.rgb(250, 205, 40), align = Paint.Align.CENTER)
+    private val newHighScoreStrokePaint = pixelTextStrokePaint(dp(24f), Color.rgb(60, 35, 15), dp(3f), align = Paint.Align.CENTER)
+
+    // Pixel-text paint factories — used only at init.
+    private fun pixelTextPaint(
+        size: Float,
+        fillColor: Int,
+        align: Paint.Align,
+        font: Typeface = pixelFontTitle
+    ): Paint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = fillColor
+            textAlign = align
+            textSize = size
+            typeface = font
+        }
+
+    private fun pixelTextStrokePaint(
+        size: Float,
+        strokeColor: Int,
+        width: Float,
+        align: Paint.Align,
+        font: Typeface = pixelFontTitle
+    ): Paint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = strokeColor
+            textAlign = align
+            textSize = size
+            style = Paint.Style.STROKE
+            strokeWidth = width
+            strokeJoin = Paint.Join.ROUND
+            typeface = font
+        }
 
     private val tmpRect = RectF()
 
@@ -435,8 +480,10 @@ class GameView @JvmOverloads constructor(
         bird.update(dt)
 
         // Ceiling clamp: allow soft overshoot rather than instant death.
-        if (bird.y - bird.radius < 0f) {
-            bird.y = bird.radius
+        // Uses the visible-silhouette half-height so the bird's top edge is
+        // what stops at the ceiling (not the larger sprite-circle radius).
+        if (bird.y - GameConfig.BIRD_COLLISION_HALF_HEIGHT < 0f) {
+            bird.y = GameConfig.BIRD_COLLISION_HALF_HEIGHT
             if (bird.velocityY < 0f) bird.velocityY = 0f
         }
 
@@ -464,7 +511,8 @@ class GameView @JvmOverloads constructor(
 
     private fun updateGameOver(dt: Float) {
         gameOverElapsed += dt
-        val restingY = groundTopY - bird.radius
+        // Bird settles when its visible bottom edge reaches the ground.
+        val restingY = groundTopY - GameConfig.BIRD_COLLISION_HALF_HEIGHT
         if (bird.y < restingY) {
             bird.update(dt)
             bird.rotationDegrees = min(bird.rotationDegrees + 540f * dt, 90f)
@@ -493,19 +541,25 @@ class GameView @JvmOverloads constructor(
     // ---------------------------------------------------------------------
 
     private fun checkCollision(): HitKind {
-        if (bird.y + bird.radius >= groundTopY) return HitKind.GROUND
+        // Bird's visible silhouette as an AABB (matches the sprite extents).
+        val bLeft = bird.x - GameConfig.BIRD_COLLISION_HALF_WIDTH
+        val bRight = bird.x + GameConfig.BIRD_COLLISION_HALF_WIDTH
+        val bTop = bird.y - GameConfig.BIRD_COLLISION_HALF_HEIGHT
+        val bBottom = bird.y + GameConfig.BIRD_COLLISION_HALF_HEIGHT
+
+        if (bBottom >= groundTopY) return HitKind.GROUND
 
         for (pair in pipePairs) {
-            if (pair.x + pair.width < bird.x - bird.radius) continue
-            if (pair.x > bird.x + bird.radius) continue
-            if (circleIntersectsRect(
-                    bird.x, bird.y, bird.radius,
+            if (pair.x + pair.width < bLeft) continue
+            if (pair.x > bRight) continue
+            if (rectsOverlap(
+                    bLeft, bTop, bRight, bBottom,
                     pair.topPipeLeft(), pair.topPipeTop(),
                     pair.topPipeRight(), pair.topPipeBottom()
                 )
             ) return HitKind.PIPE
-            if (circleIntersectsRect(
-                    bird.x, bird.y, bird.radius,
+            if (rectsOverlap(
+                    bLeft, bTop, bRight, bBottom,
                     pair.bottomPipeLeft(), pair.bottomPipeTop(),
                     pair.bottomPipeRight(), pair.bottomPipeBottom(groundTopY)
                 )
@@ -514,16 +568,11 @@ class GameView @JvmOverloads constructor(
         return HitKind.NONE
     }
 
-    private fun circleIntersectsRect(
-        cx: Float, cy: Float, r: Float,
-        left: Float, top: Float, right: Float, bottom: Float
-    ): Boolean {
-        val nearestX = max(left, min(cx, right))
-        val nearestY = max(top, min(cy, bottom))
-        val dx = cx - nearestX
-        val dy = cy - nearestY
-        return (dx * dx + dy * dy) <= (r * r)
-    }
+    /** Standard AABB overlap test. */
+    private fun rectsOverlap(
+        l1: Float, t1: Float, r1: Float, b1: Float,
+        l2: Float, t2: Float, r2: Float, b2: Float
+    ): Boolean = r1 > l2 && l1 < r2 && b1 > t2 && t1 < b2
 
     private fun enterGameOver(hit: HitKind) {
         state = GameState.GameOver
@@ -580,39 +629,18 @@ class GameView @JvmOverloads constructor(
     // ---- World-space drawing (called inside the scaled canvas) ----
 
     private fun drawPipes(canvas: Canvas) {
-        val lipOverhang = 8f
-        val lipHeight = 36f
         for (pair in pipePairs) {
-            canvas.drawRect(
+            // Top pipe — column descends from y=0 to gap, lip at the bottom.
+            PipeSprite.renderTopPipe(
+                canvas,
                 pair.topPipeLeft(), pair.topPipeTop(),
-                pair.topPipeRight(), pair.topPipeBottom(), pipePaint
+                pair.topPipeRight(), pair.topPipeBottom()
             )
-            canvas.drawRect(
-                pair.topPipeRight() - 10f, pair.topPipeTop(),
-                pair.topPipeRight(), pair.topPipeBottom(), pipeShadowPaint
-            )
-            canvas.drawRect(
-                pair.topPipeLeft() - lipOverhang,
-                pair.topPipeBottom() - lipHeight,
-                pair.topPipeRight() + lipOverhang,
-                pair.topPipeBottom(),
-                pipeLipPaint
-            )
-
-            canvas.drawRect(
+            // Bottom pipe — column ascends from gap to ground, lip at the top.
+            PipeSprite.renderBottomPipe(
+                canvas,
                 pair.bottomPipeLeft(), pair.bottomPipeTop(),
-                pair.bottomPipeRight(), pair.bottomPipeBottom(groundTopY), pipePaint
-            )
-            canvas.drawRect(
-                pair.bottomPipeRight() - 10f, pair.bottomPipeTop(),
-                pair.bottomPipeRight(), pair.bottomPipeBottom(groundTopY), pipeShadowPaint
-            )
-            canvas.drawRect(
-                pair.bottomPipeLeft() - lipOverhang,
-                pair.bottomPipeTop(),
-                pair.bottomPipeRight() + lipOverhang,
-                pair.bottomPipeTop() + lipHeight,
-                pipeLipPaint
+                pair.bottomPipeRight(), pair.bottomPipeBottom(groundTopY)
             )
         }
     }
@@ -635,36 +663,11 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun drawBird(canvas: Canvas) {
-        val r = bird.radius
-        canvas.save()
-        canvas.rotate(bird.rotationDegrees, bird.x, bird.y)
-
-        canvas.drawCircle(bird.x, bird.y, r, birdBodyPaint)
-        canvas.drawCircle(bird.x, bird.y, r, birdOutlinePaint)
-
-        val wingPhase = sin(totalElapsed * 10f + bird.y * 0.02f)
-        val wingH = r * 0.35f * (0.7f + 0.3f * wingPhase)
-        tmpRect.set(
-            bird.x - r * 0.5f,
-            bird.y - wingH,
-            bird.x + r * 0.3f,
-            bird.y + wingH
-        )
-        canvas.drawOval(tmpRect, birdWingPaint)
-        canvas.drawOval(tmpRect, birdOutlinePaint)
-
-        canvas.drawCircle(bird.x + r * 0.35f, bird.y - r * 0.35f, r * 0.22f, birdEyeWhitePaint)
-        canvas.drawCircle(bird.x + r * 0.35f, bird.y - r * 0.35f, r * 0.22f, birdOutlinePaint)
-        canvas.drawCircle(bird.x + r * 0.42f, bird.y - r * 0.32f, r * 0.10f, birdEyePupilPaint)
-
-        tmpRect.set(
-            bird.x + r * 0.55f, bird.y - r * 0.18f,
-            bird.x + r + 14f, bird.y + r * 0.18f
-        )
-        canvas.drawRect(tmpRect, birdBeakPaint)
-        canvas.drawRect(tmpRect, birdOutlinePaint)
-
-        canvas.restore()
+        // Sprite spans the bird's diameter horizontally (visual scale only).
+        // Collision uses an AABB matching the visible silhouette — see
+        // BIRD_COLLISION_HALF_WIDTH / HEIGHT in GameConfig and checkCollision.
+        val pixelSize = (bird.radius * 2f) / BirdSprite.widthCells
+        BirdSprite.render(canvas, bird.x, bird.y, pixelSize, bird.rotationDegrees)
     }
 
     // ---- UI drawing (physical pixels, dp text, safe-area aware) ----
@@ -705,37 +708,114 @@ class GameView @JvmOverloads constructor(
     private fun drawGameOverOverlay(canvas: Canvas) {
         val cx = screenW / 2f
 
-        val headerY = max(safeTop() + dp(72f), screenH * 0.22f)
+        // ---- Layout: vertically center the (title + panel) group ----
+        // Title and panel form a visual unit; we center that unit on the
+        // screen, biased slightly upward so "NEW HIGH SCORE!" + "TAP TO
+        // RESTART" still have room beneath without crowding the gesture bar.
+        val panelW = min(dp(360f), screenW * 0.88f)
+        val panelH = panelW * 0.50f                       // ~2:1 aspect, matches reference
+        val titleSize = dp(56f)                           // matches titlePaint textSize
+        val titleToPanelGap = dp(40f)
+        val groupH = titleSize + titleToPanelGap + panelH
+        val biasUp = dp(40f)                              // leave room below for restart prompt
+        val groupTop = (screenH - groupH) / 2f - biasUp
+
+        // Title baseline — clamp under safe top so notches never clip it.
+        val headerY = max(safeTop() + dp(60f), groupTop + titleSize)
+        // Panel sits gap-distance below the title baseline.
+        val panelTop = headerY + titleToPanelGap
+        val panelLeft = cx - panelW / 2f
+        val panelRight = panelLeft + panelW
+        val panelBottom = panelTop + panelH
+
+        // ---- "GAME OVER" title (orange pixel block, dark stroke) ----
         canvas.drawText("GAME OVER", cx, headerY, titleStrokePaint)
         canvas.drawText("GAME OVER", cx, headerY, titlePaint)
 
-        val panelW = min(dp(300f), screenW * 0.8f)
-        val panelH = dp(130f)
-        val panelLeft = cx - panelW / 2f
-        val panelTop = headerY + dp(50f)
-        tmpRect.set(panelLeft, panelTop, panelLeft + panelW, panelTop + panelH)
-        val corner = dp(12f)
-        canvas.drawRoundRect(tmpRect, corner, corner, panelPaint)
-        canvas.drawRoundRect(tmpRect, corner, corner, panelStrokePaint)
+        // ---- Scoreboard panel ----
+        val drawable = scoreboardDrawable
+        if (drawable != null) {
+            // Pixel-asset path: render the layer-list drawable.
+            drawable.setBounds(
+                panelLeft.toInt(), panelTop.toInt(),
+                panelRight.toInt(), panelBottom.toInt()
+            )
+            drawable.draw(canvas)
+        } else {
+            // Procedural fallback (shouldn't happen — kept for resilience).
+            val cornerOuter = dp(14f)
+            val cornerInner = dp(11f)
+            val borderW = dp(4f)
+            tmpRect.set(panelLeft, panelTop, panelRight, panelBottom)
+            canvas.drawRoundRect(tmpRect, cornerOuter, cornerOuter, panelBorderPaint)
+            tmpRect.set(panelLeft + dp(2f), panelTop + dp(2f), panelRight - dp(2f), panelBottom - dp(2f))
+            canvas.drawRoundRect(tmpRect, dp(13f), dp(13f), panelInnerHighlightPaint)
+            tmpRect.set(panelLeft + borderW, panelTop + borderW, panelRight - borderW, panelBottom - borderW)
+            canvas.drawRoundRect(tmpRect, cornerInner, cornerInner, panelFillPaint)
+        }
 
-        canvas.drawText("SCORE: $score", cx, panelTop + panelH * 0.38f, panelTextPaint)
-        canvas.drawText("BEST: $highScore", cx, panelTop + panelH * 0.78f, panelTextPaint)
+        // Layout zones inside the panel
+        val medalCx = panelLeft + panelW * 0.27f
+        val rightX = panelRight - dp(20f)
+        val labelTop = panelTop + dp(28f)
 
+        // ---- Left: MEDAL label + medal slot ----
+        canvas.drawText("MEDAL", medalCx, labelTop, panelLabelCenterPaint)
+        val medalCy = panelTop + panelH * 0.62f
+        val medalR = panelH * 0.30f
+        drawMedal(canvas, medalCx, medalCy, medalR, medalForScore(score))
+
+        // ---- Right: SCORE + HIGH SCORE columns (right-aligned) ----
+        canvas.drawText("SCORE", rightX, labelTop, panelLabelRightPaint)
+        val scoreNumberY = labelTop + dp(28f)
+        canvas.drawText(score.toString(), rightX, scoreNumberY, panelNumberStrokePaint)
+        canvas.drawText(score.toString(), rightX, scoreNumberY, panelNumberPaint)
+
+        val highLabelY = panelTop + panelH * 0.58f
+        canvas.drawText("HIGH SCORE", rightX, highLabelY, panelLabelRightPaint)
+        val highNumberY = highLabelY + dp(28f)
+        canvas.drawText(highScore.toString(), rightX, highNumberY, panelNumberStrokePaint)
+        canvas.drawText(highScore.toString(), rightX, highNumberY, panelNumberPaint)
+
+        // ---- "NEW HIGH SCORE!" banner under the panel (gentle pulse) ----
         if (isNewHighScore) {
             val pulse = 1f + 0.08f * sin(gameOverElapsed * 6f)
-            val msgY = panelTop + panelH + dp(60f)
+            val msgY = panelBottom + dp(48f)
             canvas.save()
             canvas.scale(pulse, pulse, cx, msgY)
-            val msg = "NEW HIGH SCORE!"
-            canvas.drawText(msg, cx, msgY, newHighScoreStrokePaint)
-            canvas.drawText(msg, cx, msgY, newHighScorePaint)
+            canvas.drawText("NEW HIGH SCORE!", cx, msgY, newHighScoreStrokePaint)
+            canvas.drawText("NEW HIGH SCORE!", cx, msgY, newHighScorePaint)
             canvas.restore()
         }
 
+        // ---- "TAP TO RESTART" — gated by RESTART_DELAY ----
         if (gameOverElapsed >= GameConfig.RESTART_DELAY) {
-            val restartY = min(safeBottom() - dp(40f), screenH * 0.82f)
+            val restartY = min(safeBottom() - dp(40f), screenH * 0.85f)
             canvas.drawText("TAP TO RESTART", cx, restartY, labelStrokePaint)
             canvas.drawText("TAP TO RESTART", cx, restartY, labelPaint)
+        }
+    }
+
+    /**
+     * Draws the medal slot. Empty (pale green disc with darker ring) when
+     * the player hasn't cleared the bronze threshold; otherwise a colored
+     * disc with a soft shine highlight.
+     */
+    private fun drawMedal(canvas: Canvas, cx: Float, cy: Float, r: Float, medal: Medal) {
+        // Outer ring (darker green) — always drawn
+        canvas.drawCircle(cx, cy, r, medalRingPaint)
+        val innerR = r - dp(5f)
+        val fill = when (medal) {
+            Medal.NONE -> medalEmptyPaint
+            Medal.BRONZE -> medalBronzePaint
+            Medal.SILVER -> medalSilverPaint
+            Medal.GOLD -> medalGoldPaint
+        }
+        canvas.drawCircle(cx, cy, innerR, fill)
+        // Shine highlight on earned medals only
+        if (medal != Medal.NONE) {
+            val highlightR = innerR * 0.35f
+            canvas.drawCircle(cx - innerR * 0.32f, cy - innerR * 0.32f, highlightR, medalShinePaint)
         }
     }
 
