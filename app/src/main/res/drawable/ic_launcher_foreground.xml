@@ -1,30 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive-icon foreground: the pixel-art bird from BirdSprite, expressed
+    as a vector drawable. Each cell of the 17x12 sprite grid is a 4dp
+    rectangle; all rectangles of the same color are merged into a single
+    <path> with multiple "M x y h w v 4 h -w Z" sub-segments — six paths
+    total (one per palette color).
+
+    Sprite is centered at (54, 54): 17 cols * 4dp = 68dp wide, 12 rows * 4dp =
+    48dp tall, top-left at (20, 30). Comfortably inside the 72dp safe zone
+    of an adaptive icon — no clipping under round / squircle masks.
+
+    Hand-derived from BirdSprite.GRID — keep the two in sync if you change
+    the sprite. Color codes:
+       B = #2B1C10 outline      Y = #FCDC5A yellow body
+       W = #FFFFFF white        O = #FFA532 orange beak
+       R = #DC463C red wing     r = #FA6E5F red wing highlight
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:pathData="M31,63.928c0,0 6.4,-11 12.1,-13.1c7.2,-2.6 26,-1.4 26,-1.4l38.1,38.1L107,108.928l-32,-1L31,63.928z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:endX="85.84757"
-                android:endY="92.4963"
-                android:startX="42.9492"
-                android:startY="49.59793"
-                android:type="linear">
-                <item
-                    android:color="#44000000"
-                    android:offset="0.0" />
-                <item
-                    android:color="#00000000"
-                    android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
+
+    <!-- Yellow body -->
+    <path
+        android:fillColor="#FCDC5A"
+        android:pathData="
+            M36,34 h20 v4 h-20 Z
+            M32,38 h16 v4 h-16 Z
+            M32,42 h16 v4 h-16 Z
+            M28,46 h20 v4 h-20 Z
+            M28,50 h20 v4 h-20 Z
+            M40,54 h12 v4 h-12 Z
+            M36,58 h24 v4 h-24 Z
+            M60,62 h8  v4 h-8  Z
+            M64,66 h4  v4 h-4  Z" />
+
+    <!-- White (eye + belly highlight) -->
     <path
         android:fillColor="#FFFFFF"
-        android:fillType="nonZero"
-        android:pathData="M65.3,45.828l3.8,-6.6c0.2,-0.4 0.1,-0.9 -0.3,-1.1c-0.4,-0.2 -0.9,-0.1 -1.1,0.3l-3.9,6.7c-6.3,-2.8 -13.4,-2.8 -19.7,0l-3.9,-6.7c-0.2,-0.4 -0.7,-0.5 -1.1,-0.3C38.8,38.328 38.7,38.828 38.9,39.228l3.8,6.6C36.2,49.428 31.7,56.028 31,63.928h46C76.3,56.028 71.8,49.428 65.3,45.828zM43.4,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2c-0.3,-0.7 -0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C45.3,56.528 44.5,57.328 43.4,57.328L43.4,57.328zM64.6,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2s-0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C66.5,56.528 65.6,57.328 64.6,57.328L64.6,57.328z"
-        android:strokeWidth="1"
-        android:strokeColor="#00000000" />
+        android:pathData="
+            M56,34 h4  v4 h-4  Z
+            M60,38 h4  v4 h-4  Z
+            M52,42 h12 v4 h-12 Z
+            M68,42 h4  v4 h-4  Z
+            M52,46 h4  v4 h-4  Z
+            M60,46 h4  v4 h-4  Z
+            M52,50 h12 v4 h-12 Z
+            M28,54 h12 v4 h-12 Z
+            M24,58 h8  v4 h-8  Z
+            M24,62 h4  v4 h-4  Z" />
+
+    <!-- Orange beak -->
+    <path
+        android:fillColor="#FFA532"
+        android:pathData="
+            M72,46 h12 v4 h-12 Z
+            M68,50 h16 v4 h-16 Z
+            M68,54 h16 v4 h-16 Z
+            M68,58 h12 v4 h-12 Z" />
+
+    <!-- Red wing -->
+    <path
+        android:fillColor="#DC463C"
+        android:pathData="
+            M32,62 h24 v4 h-24 Z
+            M32,66 h4  v4 h-4  Z
+            M56,66 h4  v4 h-4  Z
+            M32,70 h28 v4 h-28 Z" />
+
+    <!-- Red wing highlight -->
+    <path
+        android:fillColor="#FA6E5F"
+        android:pathData="M36,66 h20 v4 h-20 Z" />
+
+    <!-- Dark outline + pupil (drawn last so it sits on top of all fills) -->
+    <path
+        android:fillColor="#2B1C10"
+        android:pathData="
+            M36,30 h24 v4 h-24 Z
+            M32,34 h4  v4 h-4  Z
+            M60,34 h8  v4 h-8  Z
+            M28,38 h4  v4 h-4  Z
+            M48,38 h12 v4 h-12 Z
+            M64,38 h8  v4 h-8  Z
+            M28,42 h4  v4 h-4  Z
+            M48,42 h4  v4 h-4  Z
+            M64,42 h4  v4 h-4  Z
+            M72,42 h4  v4 h-4  Z
+            M24,46 h4  v4 h-4  Z
+            M48,46 h4  v4 h-4  Z
+            M56,46 h4  v4 h-4  Z
+            M64,46 h8  v4 h-8  Z
+            M84,46 h4  v4 h-4  Z
+            M24,50 h4  v4 h-4  Z
+            M48,50 h4  v4 h-4  Z
+            M64,50 h4  v4 h-4  Z
+            M84,50 h4  v4 h-4  Z
+            M24,54 h4  v4 h-4  Z
+            M52,54 h16 v4 h-16 Z
+            M84,54 h4  v4 h-4  Z
+            M20,58 h4  v4 h-4  Z
+            M32,58 h4  v4 h-4  Z
+            M60,58 h8  v4 h-8  Z
+            M80,58 h4  v4 h-4  Z
+            M20,62 h4  v4 h-4  Z
+            M28,62 h4  v4 h-4  Z
+            M56,62 h4  v4 h-4  Z
+            M68,62 h8  v4 h-8  Z
+            M24,66 h8  v4 h-8  Z
+            M60,66 h4  v4 h-4  Z
+            M68,66 h4  v4 h-4  Z
+            M24,70 h8  v4 h-8  Z
+            M60,70 h8  v4 h-8  Z
+            M28,74 h36 v4 h-36 Z" />
 </vector>

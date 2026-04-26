@@ -13,7 +13,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.TappyBird">
         <activity
-            android:name=".MainActivity"
+            android:name=".SplashActivity"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
             android:exported="true"
             android:screenOrientation="portrait"
@@ -25,6 +25,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowLayoutInDisplayCutoutMode="shortEdges"
+            tools:ignore="LockedOrientationActivity" />
     </application>
 
 </manifest>
