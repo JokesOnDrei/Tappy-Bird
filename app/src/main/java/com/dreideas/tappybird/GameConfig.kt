@@ -198,15 +198,23 @@ object GameConfig {
     const val PIXEL_FONT_TITLE_RES: String = "jersey_regular"
     const val PIXEL_FONT_BODY_RES: String = "jersey_regular"
 
-    // -------- Medals --------
+    // -------- Ranks --------
     /**
-     * Score thresholds for end-of-game medals shown in the Game Over panel.
-     * Tuned against the difficulty curve from the physics analysis (see
-     * README "Predicted performance"): casual players (~4 pipes median)
-     * almost never see a medal, average players (~12) earn bronze, skilled
-     * players reliably hit gold.
+     * Score thresholds for end-of-game ranks shown in the Game Over panel.
+     * Five tiers — every score earns a rank (no "empty slot" experience).
+     *
+     * Tuned against the difficulty model (README "Predicted performance"):
+     *   -    0–9   ROOKIE   first-timers, learning the cadence
+     *   -  10–29   CASUAL   median engaged player territory
+     *   -  30–49   DECENT   solid, repeatable runs
+     *   -  50–99   ACE      skilled (6+ tps), consistent navigation
+     *   - 100+     LEGEND   the rare air; expert-tier sustained play
+     *
+     * The 100-pipe LEGEND threshold is intentionally aspirational — only
+     * skilled+ players reach it routinely, but it's not unobtainable.
      */
-    const val MEDAL_BRONZE_THRESHOLD: Int = 10
-    const val MEDAL_SILVER_THRESHOLD: Int = 20
-    const val MEDAL_GOLD_THRESHOLD: Int = 30
+    const val RANK_CASUAL_THRESHOLD: Int = 10
+    const val RANK_DECENT_THRESHOLD: Int = 30
+    const val RANK_ACE_THRESHOLD: Int = 50
+    const val RANK_LEGEND_THRESHOLD: Int = 100
 }

@@ -20,6 +20,7 @@ import com.dreideas.tappybird.entities.Bird
 import com.dreideas.tappybird.entities.PipePair
 import com.dreideas.tappybird.sprites.BirdSprite
 import com.dreideas.tappybird.sprites.PipeSprite
+import com.dreideas.tappybird.sprites.RankSprite
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -83,15 +84,7 @@ class GameView @JvmOverloads constructor(
     /** What killed the bird this frame. Drives which audio cue plays. */
     private enum class HitKind { NONE, GROUND, PIPE }
 
-    /** Medal earned at game-over. NONE if the score didn't clear bronze. */
-    private enum class Medal { NONE, BRONZE, SILVER, GOLD }
-
-    private fun medalForScore(s: Int): Medal = when {
-        s >= GameConfig.MEDAL_GOLD_THRESHOLD -> Medal.GOLD
-        s >= GameConfig.MEDAL_SILVER_THRESHOLD -> Medal.SILVER
-        s >= GameConfig.MEDAL_BRONZE_THRESHOLD -> Medal.BRONZE
-        else -> Medal.NONE
-    }
+    // Rank tier and lookup live in RankSprite — see sprites/RankSprite.kt.
 
     // ---------------------------------------------------------------------
     //  Device surface (in physical pixels)
@@ -239,13 +232,7 @@ class GameView @JvmOverloads constructor(
     private val panelNumberPaint = pixelTextPaint(dp(28f), Color.WHITE, align = Paint.Align.RIGHT)
     private val panelNumberStrokePaint = pixelTextStrokePaint(dp(28f), Color.rgb(60, 35, 15), dp(4f), align = Paint.Align.RIGHT)
 
-    // Medal palette
-    private val medalRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(150, 185, 130) }
-    private val medalEmptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(200, 225, 175) }
-    private val medalBronzePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(195, 110, 50) }
-    private val medalSilverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(195, 200, 215) }
-    private val medalGoldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(245, 200, 60) }
-    private val medalShinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(140, 255, 255, 255) }
+    // Rank icons (ROOKIE / CASUAL / DECENT / ACE / LEGEND) are rendered via RankSprite.
 
     // "NEW HIGH SCORE!" banner (gold pixel text)
     private val newHighScorePaint = pixelTextPaint(dp(24f), Color.rgb(250, 205, 40), align = Paint.Align.CENTER)
@@ -755,15 +742,21 @@ class GameView @JvmOverloads constructor(
         }
 
         // Layout zones inside the panel
-        val medalCx = panelLeft + panelW * 0.27f
+        val rankCx = panelLeft + panelW * 0.27f
         val rightX = panelRight - dp(20f)
         val labelTop = panelTop + dp(28f)
 
-        // ---- Left: MEDAL label + medal slot ----
-        canvas.drawText("MEDAL", medalCx, labelTop, panelLabelCenterPaint)
-        val medalCy = panelTop + panelH * 0.62f
-        val medalR = panelH * 0.30f
-        drawMedal(canvas, medalCx, medalCy, medalR, medalForScore(score))
+        // ---- Left: RANK label + pixel rank icon + rank name ----
+        canvas.drawText("RANK", rankCx, labelTop, panelLabelCenterPaint)
+        val rank = RankSprite.forScore(score)
+        // Sprite is 12 cells wide; aim for ~60% of panel height tall, so each
+        // cell is panelH * 0.05 — produces a 60% × 60% icon centered nicely.
+        val rankPixelSize = panelH * 0.045f
+        val rankIconCy = panelTop + panelH * 0.55f
+        RankSprite.render(canvas, rank, rankCx, rankIconCy, rankPixelSize)
+        // Rank name beneath the icon — same paint as the "RANK" header for symmetry.
+        val rankNameY = panelTop + panelH * 0.92f
+        canvas.drawText(RankSprite.displayName(rank), rankCx, rankNameY, panelLabelCenterPaint)
 
         // ---- Right: SCORE + HIGH SCORE columns (right-aligned) ----
         canvas.drawText("SCORE", rightX, labelTop, panelLabelRightPaint)
@@ -796,28 +789,7 @@ class GameView @JvmOverloads constructor(
         }
     }
 
-    /**
-     * Draws the medal slot. Empty (pale green disc with darker ring) when
-     * the player hasn't cleared the bronze threshold; otherwise a colored
-     * disc with a soft shine highlight.
-     */
-    private fun drawMedal(canvas: Canvas, cx: Float, cy: Float, r: Float, medal: Medal) {
-        // Outer ring (darker green) — always drawn
-        canvas.drawCircle(cx, cy, r, medalRingPaint)
-        val innerR = r - dp(5f)
-        val fill = when (medal) {
-            Medal.NONE -> medalEmptyPaint
-            Medal.BRONZE -> medalBronzePaint
-            Medal.SILVER -> medalSilverPaint
-            Medal.GOLD -> medalGoldPaint
-        }
-        canvas.drawCircle(cx, cy, innerR, fill)
-        // Shine highlight on earned medals only
-        if (medal != Medal.NONE) {
-            val highlightR = innerR * 0.35f
-            canvas.drawCircle(cx - innerR * 0.32f, cy - innerR * 0.32f, highlightR, medalShinePaint)
-        }
-    }
+    // Rank icons are drawn via RankSprite.render — no helper needed here.
 
     // =====================================================================
     //  Input — taps are in physical pixels; world coordinates don't matter.
